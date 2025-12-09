@@ -137,4 +137,16 @@ export class RoomService {
     if (!transport) throw new Error(`Transport ${transportId} not found`);
     return transport;
   }
+
+  async resumeConsumer(roomId: string, peerId: string, consumerId: string) {
+    const room = this.rooms.get(roomId);
+    const peer = room?.peers.get(peerId);
+    const consumer = peer?.consumers.get(consumerId);
+
+    if (!consumer) throw new Error(`Consumer ${consumerId} not found`);
+
+    await consumer.resume(); // 核心：让 Mediasoup 开始发包
+
+    await consumer.requestKeyFrame();
+  }
 }

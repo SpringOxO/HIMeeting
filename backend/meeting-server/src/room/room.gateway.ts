@@ -26,7 +26,7 @@ export class RoomGateway {
     
     // 调用 Service 逻辑
     const rtpCapabilities = await this.roomService.joinRoom(data.roomId, client.id);
-    
+    // console.log("Success.")
     // 返回给前端
     return { rtpCapabilities };
   }
@@ -80,5 +80,14 @@ export class RoomGateway {
       data.rtpCapabilities,
     );
     return params;
+  }
+
+  @SubscribeMessage('resumeConsumer')
+  async handleResumeConsumer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; consumerId: string },
+  ) {
+    await this.roomService.resumeConsumer(data.roomId, client.id, data.consumerId);
+    return { success: true };
   }
 }

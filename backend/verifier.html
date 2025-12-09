@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>Mediasoup 后端功能验证工具</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .container { display: flex; gap: 20px; }
+        video { width: 320px; height: 240px; background: #333; }
+        .status { margin-top: 15px; padding: 10px; border: 1px solid #ccc; background: #f9f9f9; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+    
+    <script src="./meeting-server/build/mediasoup-client.bundle.js"></script> 
+</head>
+<body>
+
+    <h2>Mediasoup SFU 验证器</h2>
+    <p>该页面用于验证 NestJS 后端创建 Transport、Producer、Consumer 的逻辑是否正确。</p>
+    <button id="startButton" onclick="startConference()">启动会议并发布流</button>
+    <div class="status">状态: <span id="status">未连接</span></div>
+
+    <div class="container">
+        <div>
+            <h3>我的画面 (Producer)</h3>
+            <video id="localVideo" autoplay muted playsInline></video>
+        </div>
+        <div>
+            <h3>远程画面 (Consumer)</h3>
+            <video id="remoteVideo" autoplay playsInline style="background: #000;"></video>
+        </div>
+    </div>
+    
+    <script>
+        // 🚨 替换成你的后端地址
+        const SERVER_URL = 'http://localhost:3000';
+        const ROOM_ID = 'quick-test-room';
+        
+        // 全局状态管理
+        let socket;
+        let device;
+        let sendTransport;
+        let recvTransport;
+        let remoteProducerIds = [];
+        
+        // =========================================================================
+        // 实用工具函数
+        // =========================================================================
+        
+        /** 更新状态栏 */
+        const updateStatus = (msg) => {
+            document.getElementById('status').textContent = msg;
+            console.log(msg);
+        };
+
+        /** 将 Socket 请求/响应封装成 Promise */
+        const request = (event, data = {}) => {
+            return new Promise((resolve, reject) => {
+                // 使用回调函数 (Ack) 接收后端响应
+                socket.emit(event, data, (response) => {
+                    if (response && response.error) {
+                        console.error(`Socket Error [${event}]:`, response.error);
+                        reject(response.error);
+                    } else {
+                        resolve(response);
+                    }
+                });
+            });
+        };
+
+        // =========================================================================
+        // 主流程
+        // =========================================================================
+
+        async function startConference() {
+            document.getElementById('startButton').disabled = true;
+            updateStatus('正在连接信令服务器...');
+
+            // 1. 连接 Socket.io
+            socket = io(SERVER_URL);
+
+            socket.on('connect', async () => {
+                updateStatus('连接成功，请求加入房间...');
+
+                // 2. 加入房间并获取 Router 能力
+                const { rtpCapabilities } = await request('joinRoom', { roomId: ROOM_ID });
+
+                // 3. 初始化 Mediasoup Device
+                device = new MediasoupClient.Device();
+                await device.load({ routerRtpCapabilities: rtpCapabilities });
+                updateStatus('Mediasoup Device 加载完成。');
+
+                // 4. 监听新流事件 (当其他用户发布流时)
+                socket.on('newProducer', async ({ producerId }) => {
+                    console.log(`收到新流通知: ${producerId}`);
+                    remoteProducerIds.push(producerId);
+                    
+                    // 确保接收 Transport 创建完成后，才开始消费
+                    if (recvTransport) {
+                        await consumeNewStream(producerId);
+                    }
+                });
+
+                // 5. 启动生产和消费流程
+                await createRecvTransport(); // 先准备接收管道
+                await publishMyStream();     // 再发布我的流
+            });
+            
+            socket.on('disconnect', () => updateStatus('连接断开'));
+        }
+
+        // --- A. 生产 (Publish) 流程 ---
+        async function publishMyStream() {
+            updateStatus('正在请求摄像头/麦克风权限...');
+            // 1. 获取本地媒体
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            document.getElementById('localVideo').srcObject = stream;
+
+            // 2. 请求后端创建发送 Transport
+            const params = await request('createWebRtcTransport', { roomId: ROOM_ID });
+            sendTransport = device.createSendTransport(params);
+
+            // 3. 监听 Transport 连接事件 (DTLS 握手)
+            sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+                try {
+                    await request('connectTransport', {
+                        roomId: ROOM_ID,
+                        transportId: sendTransport.id,
+                        dtlsParameters,
+                    });
+                    callback();
+                } catch (error) {
+                    errback(error);
+                }
+            });
+
+            sendTransport.on('produce', async ({ kind, rtpParameters, appData }, callback, errback) => {
+                try {
+                    // 向后端发送信令，让后端创建 Producer
+                    const { id } = await request('produce', {
+                        roomId: ROOM_ID,
+                        transportId: sendTransport.id,
+                        kind,
+                        rtpParameters,
+                        // appData: appData, // 可选
+                    });
+
+                    // 成功后，将后端创建的 Producer ID 返回给客户端的 produce() 调用
+                    callback({ id });
+                } catch (error) {
+                    errback(error);
+                }
+            });
+
+            // 4. 发布本地流 (Produce)
+            const videoTrack = stream.getVideoTracks()[0];
+            const audioTrack = stream.getAudioTracks()[0];
+
+            await sendTransport.produce({ track: videoTrack });
+            await sendTransport.produce({ track: audioTrack });
+
+            updateStatus('本地流发布成功 (Producer)');
+        }
+
+        // --- B. 消费 (Consume) 流程 - Transport 创建 ---
+        async function createRecvTransport() {
+            // 1. 请求后端创建接收 Transport
+            const params = await request('createWebRtcTransport', { roomId: ROOM_ID });
+            recvTransport = device.createRecvTransport(params);
+
+            // 2. 监听 Transport 连接事件 (DTLS 握手)
+            recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+                try {
+                    await request('connectTransport', {
+                        roomId: ROOM_ID,
+                        transportId: recvTransport.id,
+                        dtlsParameters,
+                    });
+                    callback();
+                } catch (error) {
+                    errback(error);
+                }
+            });
+            
+            updateStatus('接收 Transport 管道已准备就绪...');
+
+            // 3. 如果有Producer已经发布了，但因为Transport未创建而错过了，现在开始消费
+            for (const producerId of remoteProducerIds) {
+                await consumeNewStream(producerId);
+            }
+        }
+        
+        // --- C. 消费 (Consume) 流程 - 订阅流 ---
+        async function consumeNewStream(producerId) {
+            if (!recvTransport) return; 
+
+            // 1. 请求后端消费流
+            const { id, kind, rtpParameters } = await request('consume', {
+                roomId: ROOM_ID,
+                transportId: recvTransport.id,
+                producerId,
+                rtpCapabilities: device.rtpCapabilities,
+            });
+
+            // 2. 前端创建 Consumer
+            const consumer = await recvTransport.consume({
+                id,
+                producerId,
+                kind,
+                rtpParameters,
+            });
+
+            // ==========================================================
+            // 🚀 核心修复：处理多 Track 和 Unmute 逻辑
+            // ==========================================================
+            
+            // 获取 HTML 上的 Video 元素
+            const videoElement = document.getElementById('remoteVideo');
+            
+            // 创建一个新的 MediaStream (如果之前已经有了，复用它会更好，但这里为了简单直接新建)
+            // 注意：如果先来了音频，这里覆盖可能会导致音频丢失，建议分开测试或合并流
+            let stream = videoElement.srcObject;
+            if (!stream) {
+                stream = new MediaStream();
+                videoElement.srcObject = stream;
+            }
+            
+            // 把新的 track 加进去
+            stream.addTrack(consumer.track);
+
+            // 【关键】如果 Track 现在是静默的，等待它有数据后再刷新
+            if (!consumer.track.muted) {
+                // 已经在播放了
+                console.log(`Track ${kind} is live immediately.`);
+            }
+
+            // 监听 unmute 事件：一旦收到第一个包，这里会触发
+            consumer.track.onunmute = () => {
+                console.log(`Track ${kind} unmuted (received data)!`);
+                // 暴力刷新：有时候浏览器需要重新赋值 srcObject 才能渲染出第一帧
+                videoElement.srcObject = stream; 
+            };
+
+            // 3. 告诉后端恢复流
+            await request('resumeConsumer', { 
+                roomId: ROOM_ID, 
+                consumerId: consumer.id 
+            });
+
+            // 4. 请求关键帧 (双重保险)
+            // 某些浏览器在 resume 后如果不马上给个关键帧，会黑屏很久
+            if (kind === 'video') {
+            // 我们可以在 consumer 内部也尝试请求一下（如果 mediasoup-client 支持）
+            // 或者依赖后端刚才加的 resumeConsumer 里的 requestKeyFrame()
+            console.log("Waiting for video keyframe...");
+            }
+
+            updateStatus(`成功接收到流: ${producerId} (${kind})`);
+        }
+    </script>
+</body>
+</html>
