@@ -82,16 +82,28 @@ export class RoomService {
 
   // --- 4. 发布媒体流 (Produce) ---
 
-  async produce(roomId: string, peerId: string, transportId: string, kind: any, rtpParameters: any) {
+  async produce(
+    roomId: string,
+    peerId: string,
+    transportId: string,
+    kind: any,
+    rtpParameters: any,
+    appData: any = {}, // <--- 🚀 新增：接收 appData
+  ) {
     const transport = this.getTransport(roomId, peerId, transportId);
-    
-    const producer = await transport.produce({ kind, rtpParameters });
-    
-    // 保存 producer
     const room = this.rooms.get(roomId);
     if (!room) throw new Error(`Room ${roomId} not found during produce.`);
     const peer = room.peers.get(peerId);
     if (!peer) throw new Error(`Peer ${peerId} not found during produce.`);
+
+    // 创建 Producer 时，将 appData 传给 Mediasoup
+    const producer = await transport.produce({ 
+      kind, 
+      rtpParameters,
+      appData, // <--- 🚀 关键：把元数据存入 Producer 对象中
+    });
+
+    // 保存 producer
     peer.producers.set(producer.id, producer);
 
     return { id: producer.id };

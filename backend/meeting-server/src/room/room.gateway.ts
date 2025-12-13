@@ -55,13 +55,31 @@ export class RoomGateway {
   @SubscribeMessage('produce')
   async handleProduce(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { roomId: string; transportId: string; kind: any; rtpParameters: any },
+    @MessageBody() data: { 
+      roomId: string; 
+      transportId: string; 
+      kind: any; 
+      rtpParameters: any; 
+      appData: any; // <--- 🚀 新增：前端会传这个参数
+    },
   ) {
-    const { id } = await this.roomService.produce(data.roomId, client.id, data.transportId, data.kind, data.rtpParameters);
-    
-    // 【关键】广播给房间里其他人："有人发流了"
-    // 前端收到这个消息后，会触发 consume 流程
-    client.to(data.roomId).emit('newProducer', { producerId: id });
+    // 调用 Service，传入 appData
+    const { id } = await this.roomService.produce(
+      data.roomId,
+      client.id,
+      data.transportId,
+      data.kind,
+      data.rtpParameters,
+      data.appData, // <--- 🚀 透传
+    );
+
+    // 【广播通知】
+    // 告诉房间里其他人："有人发流了，ID是这个，类型是 appData.source"
+    client.to(data.roomId).emit('newProducer', { 
+      producerId: id,
+      peerId: client.id,   // 顺便告诉是谁发的
+      appData: data.appData // <--- 🚀 关键：让接收端知道这是屏幕共享还是摄像头
+    });
 
     return { id };
   }

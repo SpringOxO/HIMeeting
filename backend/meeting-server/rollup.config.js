@@ -1,3 +1,4 @@
+//本文件用来打包mediasoup-client，用来使单个html文件也能方便地进行接口测试(verifier)
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
 

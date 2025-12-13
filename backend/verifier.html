@@ -18,6 +18,7 @@
     <h2>Mediasoup SFU 验证器</h2>
     <p>该页面用于验证 NestJS 后端创建 Transport、Producer、Consumer 的逻辑是否正确。</p>
     <button id="startButton" onclick="startConference()">启动会议并发布流</button>
+    <button id="screenShareBtn" onclick="startScreenShare()">📺 开启屏幕共享</button>
     <div class="status">状态: <span id="status">未连接</span></div>
 
     <div class="container">
@@ -91,13 +92,14 @@
                 updateStatus('Mediasoup Device 加载完成。');
 
                 // 4. 监听新流事件 (当其他用户发布流时)
-                socket.on('newProducer', async ({ producerId }) => {
-                    console.log(`收到新流通知: ${producerId}`);
-                    remoteProducerIds.push(producerId);
+                socket.on('newProducer', async ({ producerId, appData }) => {
+                    console.log(`收到新流通知: ${producerId}`, appData);
                     
-                    // 确保接收 Transport 创建完成后，才开始消费
+                    // 如果是屏幕共享，我们可以给它特殊的样式
+                    const isScreenShare = appData && appData.source === 'screen';
+                    
                     if (recvTransport) {
-                        await consumeNewStream(producerId);
+                        await consumeNewStream(producerId, isScreenShare);
                     }
                 });
 
@@ -162,6 +164,56 @@
             updateStatus('本地流发布成功 (Producer)');
         }
 
+        async function startScreenShare() {
+            if (!device.canProduce('video')) {
+                console.error("无法发布视频");
+                return;
+            }
+
+            try {
+                // 1. 获取屏幕流 (核心 API)
+                const stream = await navigator.mediaDevices.getDisplayMedia({ 
+                    video: {
+                        width: 1920,
+                        height: 1080,
+                        frameRate: 15 // 屏幕共享通常不需要高帧率，省带宽
+                    },
+                    audio: false // 暂时不共享系统声音，复杂点
+                });
+                
+                const track = stream.getVideoTracks()[0];
+
+                // 监听用户点击浏览器自带的“停止共享”按钮
+                track.onended = () => {
+                    console.log('屏幕共享已停止');
+                    // 这里可以添加逻辑通知后端关闭 Producer
+                };
+
+                // 2. 复用已有的 sendTransport 发布流
+                // 注意：这次我们带上了 appData: { source: 'screen' }
+                const producer = await sendTransport.produce({
+                    track: track,
+                    encodings: [
+                        { maxBitrate: 3000000 }, // 屏幕共享码率给高一点 (3Mbps)
+                    ],
+                    appData: { source: 'screen' } // <--- 🚀 标记这是屏幕
+                });
+
+                // 3. 本地显示
+                const localVideo = document.createElement('video');
+                localVideo.srcObject = new MediaStream([track]);
+                localVideo.autoplay = true;
+                localVideo.style.width = '300px';
+                localVideo.style.border = '2px solid blue'; // 蓝色边框区分屏幕共享
+                document.body.appendChild(localVideo); // 简单粗暴加到页面上
+
+                console.log('屏幕共享发布成功，Producer ID:', producer.id);
+
+            } catch (err) {
+                console.error('屏幕共享失败:', err);
+            }
+        }
+
         // --- B. 消费 (Consume) 流程 - Transport 创建 ---
         async function createRecvTransport() {
             // 1. 请求后端创建接收 Transport
@@ -191,7 +243,7 @@
         }
         
         // --- C. 消费 (Consume) 流程 - 订阅流 ---
-        async function consumeNewStream(producerId) {
+        async function consumeNewStream(producerId, isScreenShare) {
             if (!recvTransport) return; 
 
             // 1. 请求后端消费流
@@ -215,7 +267,21 @@
             // ==========================================================
             
             // 获取 HTML 上的 Video 元素
-            const videoElement = document.getElementById('remoteVideo');
+            const videoElement = document.createElement('video'); // 动态创建标签
+            videoElement.srcObject = new MediaStream([consumer.track]);
+            videoElement.autoplay = true;
+            videoElement.playsInline = true;
+            
+            if (isScreenShare) {
+                videoElement.style.border = "5px solid red"; // 红色边框表示这是屏幕共享
+                videoElement.style.width = "600px"; // 屏幕共享显示大一点
+                updateStatus(`正在观看屏幕共享: ${producerId}`);
+            } else {
+                videoElement.style.width = "300px";
+            }
+
+            document.querySelector('.container').appendChild(videoElement);
+
             
             // 创建一个新的 MediaStream (如果之前已经有了，复用它会更好，但这里为了简单直接新建)
             // 注意：如果先来了音频，这里覆盖可能会导致音频丢失，建议分开测试或合并流
@@ -240,6 +306,8 @@
                 // 暴力刷新：有时候浏览器需要重新赋值 srcObject 才能渲染出第一帧
                 videoElement.srcObject = stream; 
             };
+
+            
 
             // 3. 告诉后端恢复流
             await request('resumeConsumer', { 
