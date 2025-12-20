@@ -1,4 +1,4 @@
-import { WebSocketGateway, WebSocketServer, SubscribeMessage, MessageBody, ConnectedSocket } from '@nestjs/websockets';
+import { WebSocketGateway, WebSocketServer, SubscribeMessage, MessageBody, ConnectedSocket, OnGatewayDisconnect } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { RoomService } from './room.service';
 
@@ -7,7 +7,7 @@ import { RoomService } from './room.service';
     origin: '*', // 允许所有跨域 (开发时方便)
   },
 })
-export class RoomGateway {
+export class RoomGateway implements OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
@@ -25,10 +25,7 @@ export class RoomGateway {
     client.join(data.roomId);
     
     // 调用 Service 逻辑
-    const rtpCapabilities = await this.roomService.joinRoom(data.roomId, client.id);
-    // console.log("Success.")
-    // 返回给前端
-    return { rtpCapabilities };
+    return await this.roomService.joinRoom(data.roomId, client.id);
   }
 
   // 2. 创建 Transport (发流或收流管道)
@@ -107,5 +104,19 @@ export class RoomGateway {
   ) {
     await this.roomService.resumeConsumer(data.roomId, client.id, data.consumerId);
     return { success: true };
+  }
+
+  async handleDisconnect(client: Socket) {
+    console.log(`Client disconnected: ${client.id}`);
+
+    // 1. 调用 Service 找到该用户所在的房间并清理 Mediasoup 资源
+    // 我们需要 Service 返回这个用户之前所在的 roomId，以便广播通知
+    const roomId = await this.roomService.handlePeerDisconnect(client.id);
+
+    if (roomId) {
+      // 2. 通知房间内其他所有人：这个 peer 走了，你们把它的画面删了
+      this.server.to(roomId).emit('peerLeft', { peerId: client.id });
+      console.log(`Broadcasting peerLeft for ${client.id} in room ${roomId}`);
+    }
   }
 }

@@ -38,7 +38,7 @@ export const config = {
           ip: '0.0.0.0', // 监听所有网卡
           // 【重要】如果你在本地开发，这里填 '127.0.0.1'
           // 【重要】如果你要手机连电脑测试，这里填电脑的局域网 IP (例如 '192.168.1.5')
-          announcedIp: '127.0.0.1', 
+          announcedIp: '10.162.221.62', 
         },
       ] as TransportListenIp[],
       initialAvailableOutgoingBitrate: 1000000, // 初始带宽 1mbps
