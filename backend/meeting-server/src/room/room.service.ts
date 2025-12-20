@@ -2,11 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { MediasoupService } from '../mediasoup/mediasoup.service';
 import { config } from '../common/config';
 import { Router, WebRtcTransport, Producer, Consumer } from 'mediasoup/types';
+import { DocumentService } from '../document/document.service';
+import { DocumentState } from '../document/document.model';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // 定义简单的接口
 interface RoomState {
   router: Router;
   peers: Map<string, PeerState>; // socketId -> Peer
+  document: DocumentState;
 }
 
 interface PeerState {
@@ -20,11 +25,15 @@ export class RoomService {
   // 内存存储：roomId -> RoomState
   private rooms: Map<string, RoomState> = new Map();
 
+  private clientRoomMap = new Map<string, string>(); // socketId -> roomId
+
   constructor(private readonly mediasoupService: MediasoupService) {}
 
   // --- 1. 房间与用户管理 ---
 
   async joinRoom(roomId: string, peerId: string) {
+    this.clientRoomMap.set(peerId, roomId);
+
     let room = this.rooms.get(roomId);
     
     const existingProducers: { producerId: string; peerId: string; appData: any }[] = [];
@@ -33,7 +42,11 @@ export class RoomService {
     if (!room) {
       const worker = this.mediasoupService.getWorker();
       const router = await worker.createRouter({ mediaCodecs: config.mediasoup.router.mediaCodecs });
-      room = { router, peers: new Map() };
+    room = {
+      router,
+      peers: new Map(),
+      document: DocumentService.create(),
+    };
       this.rooms.set(roomId, room);
     }
 
@@ -45,6 +58,9 @@ export class RoomService {
         consumers: new Map(),
       });
     }
+
+    // 返回 Yjs state
+    const documentState = DocumentService.encodeState(room.document);
 
     room.peers.forEach((peer, existingPeerId) => {
       // 排除掉自己（虽然刚加入时自己还没发流，但这是个好习惯）
@@ -63,6 +79,7 @@ export class RoomService {
     return {
       rtpCapabilities: room.router.rtpCapabilities,
       existingProducers, //  将存量列表返回给前端
+      documentState,
     };
   }
 
@@ -181,37 +198,66 @@ export class RoomService {
     await consumer.requestKeyFrame();
   }
 
-  async handlePeerDisconnect(peerId: string): Promise<string | null> {
-  let foundRoomId: string | null = null;
-
-  // 1. 遍历所有房间寻找这个 peer
-  for (const [roomId, room] of this.rooms.entries()) {
-    if (room.peers.has(peerId)) {
-      foundRoomId = roomId;
-      const peer = room.peers.get(peerId);
-
-      // 2. 销毁该 Peer 拥有的所有 Mediasoup 资源 (Producers, Consumers, Transports)
-      // 这一步非常重要，否则服务器内存会溢出
-      if (peer) {
-        // 关闭该 Peer 的所有 Producers
-        peer.producers.forEach(p => p.close());
-        // 关闭该 Peer 的所有 Consumers
-        peer.consumers.forEach(c => c.close());
-        // 假设你在 Peer 对象中也存了 transports，也需要全部 close
-        // peer.transports.forEach(t => t.close());
-      }
-
-      // 3. 从 Room 的 Peer 列表中移除
-      room.peers.delete(peerId);
-      console.log(`Peer ${peerId} removed from room ${roomId}`);
-      
-      // 如果房间空了，可以考虑销毁 Router (可选)
-      // if (room.peers.size === 0) { ... }
-      
-      break; 
-    }
+  getRoomIdByClient(clientId: string): string {
+    const roomId = this.clientRoomMap.get(clientId);
+    if (!roomId) throw new Error(`Room ${roomId} not found in the map.`);
+    return roomId;
   }
 
-  return foundRoomId;
-}
+  getRoomByRoomId(roomId: string): RoomState {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error(`Room ${roomId} not found in the map.`);
+    return room;
+  }
+
+  async handlePeerDisconnect(peerId: string): Promise<string | null> {
+    let foundRoomId: string | null = null;
+
+    // 1. 遍历所有房间寻找这个 peer
+    for (const [roomId, room] of this.rooms.entries()) {
+      if (room.peers.has(peerId)) {
+        foundRoomId = roomId;
+        const peer = room.peers.get(peerId);
+
+        // 2. 销毁该 Peer 拥有的所有 Mediasoup 资源 (Producers, Consumers, Transports)
+        // 这一步非常重要，否则服务器内存会溢出
+        if (peer) {
+          // 关闭该 Peer 的所有 Producers
+          peer.producers.forEach(p => p.close());
+          // 关闭该 Peer 的所有 Consumers
+          peer.consumers.forEach(c => c.close());
+          // 假设你在 Peer 对象中也存了 transports，也需要全部 close
+          // peer.transports.forEach(t => t.close());
+        }
+
+        // 3. 从 Room 的 Peer 列表中移除
+        room.peers.delete(peerId);
+        console.log(`Peer ${peerId} removed from room ${roomId}`);
+        
+        // 如果房间空了，可以考虑销毁 Router (可选)
+        if (room.peers.size === 0) { 
+          await this.destroyRoom(roomId); 
+        }
+        
+        break; 
+      }
+    }
+    return foundRoomId;
+  }
+
+  async destroyRoom(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    // 销毁房间时保存文档
+    const dir = path.join(process.cwd(), 'documents');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir);
+    }
+    const filename = `${roomId}-${Date.now()}.txt`;
+    const binary = DocumentService.encodeState(room.document);
+    await fs.promises.writeFile(path.join(dir, filename), Buffer.from(binary));
+
+    this.rooms.delete(roomId);
+  }
 }

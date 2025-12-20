@@ -1,6 +1,7 @@
 import { WebSocketGateway, WebSocketServer, SubscribeMessage, MessageBody, ConnectedSocket, OnGatewayDisconnect } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { RoomService } from './room.service';
+import { DocumentService } from '../document/document.service';
 
 @WebSocketGateway({
   cors: {
@@ -25,7 +26,10 @@ export class RoomGateway implements OnGatewayDisconnect {
     client.join(data.roomId);
     
     // 调用 Service 逻辑
-    return await this.roomService.joinRoom(data.roomId, client.id);
+    const result = await this.roomService.joinRoom(data.roomId, client.id);
+    // console.log("Success.")
+    // 返回给前端
+    return { result };
   }
 
   // 2. 创建 Transport (发流或收流管道)
@@ -104,6 +108,29 @@ export class RoomGateway implements OnGatewayDisconnect {
   ) {
     await this.roomService.resumeConsumer(data.roomId, client.id, data.consumerId);
     return { success: true };
+  }
+
+  @SubscribeMessage('updateDocument')
+  handleUpdateDocument(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      roomId: string;
+      update: number[]; // 前端传 Array
+    },
+  ) {
+    const { roomId, update } = data;
+
+    const room = this.roomService.getRoomByRoomId(roomId);
+    if (!room) return;
+
+    const uint8Update = Uint8Array.from(update);
+
+    // 应用更新
+    DocumentService.applyUpdate(room.document, uint8Update);
+
+    // 广播给其他客户端
+    client.to(roomId).emit('documentUpdate', update);
   }
 
   async handleDisconnect(client: Socket) {

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>WS Test</title>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+</head>
+<body>
+  <h1>WebSocket Test</h1>
+
+  <script>
+    // 连接到 Nest 后端（注意端口）
+    const socket = io('http://localhost:3000');
+
+    socket.on('connect', () => {
+      console.log('connected:', socket.id);
+
+      // join room
+      socket.emit('joinRoom', {
+        roomId: 'test-room',
+        peerId: socket.id,
+      });
+    });
+
+    socket.on('documentUpdated', (doc) => {
+      console.log('documentUpdated:', doc);
+    });
+  </script>
+</body>
+</html>

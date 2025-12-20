@@ -5,6 +5,7 @@ import { MediasoupModule } from 'src/mediasoup/mediasoup.module';
 
 @Module({
   imports: [MediasoupModule],
-  providers: [RoomService, RoomGateway]
+  providers: [RoomService, RoomGateway],
+  exports: [RoomService],
 })
 export class RoomModule {}
