@@ -2,11 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { MediasoupService } from '../mediasoup/mediasoup.service';
 import { config } from '../common/config';
 import { Router, WebRtcTransport, Producer, Consumer } from 'mediasoup/types';
+import { DocumentService } from '../document/document.service';
+import { DocumentState } from '../document/document.model';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // 定义简单的接口
 interface RoomState {
   router: Router;
   peers: Map<string, PeerState>; // socketId -> Peer
+  document: DocumentState;
 }
 
 interface PeerState {
@@ -20,18 +25,26 @@ export class RoomService {
   // 内存存储：roomId -> RoomState
   private rooms: Map<string, RoomState> = new Map();
 
+  private clientRoomMap = new Map<string, string>(); // socketId -> roomId
+
   constructor(private readonly mediasoupService: MediasoupService) {}
 
   // --- 1. 房间与用户管理 ---
 
   async joinRoom(roomId: string, peerId: string) {
+    this.clientRoomMap.set(peerId, roomId);
+
     let room = this.rooms.get(roomId);
     
     // 如果房间不存在，创建一个新的 Router
     if (!room) {
       const worker = this.mediasoupService.getWorker();
       const router = await worker.createRouter({ mediaCodecs: config.mediasoup.router.mediaCodecs });
-      room = { router, peers: new Map() };
+    room = {
+      router,
+      peers: new Map(),
+      document: DocumentService.create(),
+    };
       this.rooms.set(roomId, room);
     }
 
@@ -44,8 +57,14 @@ export class RoomService {
       });
     }
 
+    // 返回 Yjs state
+    const documentState = DocumentService.encodeState(room.document);
+
     // 返回 Router 的能力 (RtpCapabilities)，前端必须拿到这个才能 load device
-    return room.router.rtpCapabilities;
+    return {
+      rtpCapabilities: room.router.rtpCapabilities,
+      documentState,
+    };
   }
 
   // --- 2. 创建传输管道 (WebRtcTransport) ---
@@ -141,6 +160,35 @@ export class RoomService {
     };
   }
 
+  async removePeer(roomId: string, peerId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    room.peers.delete(peerId);
+    this.clientRoomMap.delete(peerId);
+
+    if (room.peers.size === 0) {
+      await this.destroyRoom(roomId);
+    }
+  }
+
+  async destroyRoom(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    // 销毁房间时保存文档
+    const dir = path.join(process.cwd(), 'documents');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir);
+    }
+    const filename = `${roomId}-${Date.now()}.txt`;
+    const binary = DocumentService.encodeState(room.document);
+    await fs.promises.writeFile(path.join(dir, filename), Buffer.from(binary));
+
+    this.rooms.delete(roomId);
+  }
+
+
   // 辅助函数：查找 Transport
   private getTransport(roomId: string, peerId: string, transportId: string) {
     const room = this.rooms.get(roomId);
@@ -160,5 +208,17 @@ export class RoomService {
     await consumer.resume(); // 核心：让 Mediasoup 开始发包
 
     await consumer.requestKeyFrame();
+  }
+
+  getRoomIdByClient(clientId: string): string {
+    const roomId = this.clientRoomMap.get(clientId);
+    if (!roomId) throw new Error(`Room ${roomId} not found in the map.`);
+    return roomId;
+  }
+
+  getRoomByRoomId(roomId: string): RoomState {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error(`Room ${roomId} not found in the map.`);
+    return room;
   }
 }
