@@ -245,6 +245,26 @@ export class RoomService {
     return foundRoomId;
   }
 
+  async closeProducer(roomId: string, peerId: string, producerId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return; // 房间不存在直接返回
+
+    const peer = room.peers.get(peerId);
+    // 🚀 核心修复：如果找不到 peer，直接跳过逻辑
+    if (!peer) {
+      console.warn(`Peer ${peerId} not found in room ${roomId}`);
+      return;
+    }
+
+    const producer = peer.producers.get(producerId);
+
+    if (producer) {
+      producer.close(); // Mediasoup 核心动作
+      peer.producers.delete(producerId); // 此时 peer 已经被确认非空
+      console.log(`Producer ${producerId} closed by peer ${peerId}`);
+    }
+  }
+
   async destroyRoom(roomId: string) {
     const room = this.rooms.get(roomId);
     if (!room) return;

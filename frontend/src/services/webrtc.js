@@ -22,7 +22,7 @@ class MeetingService {
     });
   }
 
-  async connect(serverUrl, roomId, onNewProducer, onPeerLeft) {
+  async connect(serverUrl, roomId, onNewProducer, onPeerLeft, onProducerClosed) {
     this.roomId = roomId;
     this.socket = io(serverUrl);
 
@@ -58,10 +58,22 @@ class MeetingService {
           onPeerLeft(peerId);
         });
 
+        this.socket.on('producerClosed', ({ producerId, peerId }) => {
+          onProducerClosed(producerId, peerId);
+        });
+
         resolve();
       });
     });
   }
+
+  async closeProducer(producerId) {
+    // 通知后端
+    await this.request('closeProducer', { 
+        roomId: this.roomId, 
+        producerId 
+    });
+}
 
   async createTransports() {
     // --- 创建发送管道 ---

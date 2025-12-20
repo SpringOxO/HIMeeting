@@ -108,6 +108,7 @@ export default {
       meetingId: this.$route.query.meetingId,
       username: this.$route.query.username,
       videoProducers: new Map(), // 存储自己的 producers
+      screenProducer: null,
     };
   },
   async mounted() {
@@ -122,6 +123,17 @@ export default {
       },
       (peerId) => {
         this.handlePeerLeft(peerId); // 🚀 处理离开
+      },
+      // 🚀 3. 新增：流关闭回调 (需要在 webrtc.js connect 方法中支持传入第三个回调)
+      (producerId, peerId) => {
+        const userObj = this.remoteUsers[peerId];
+        if (userObj) {
+          // 如果关掉的是视频流，我们要检查是否需要切回摄像头
+          // 简单做法：只要有流关闭，就尝试重置该用户的显示状态
+          userObj.isSharingScreen = false; 
+          userObj.screenStream = new MediaStream(); // 清空屏幕流容器
+          this.updateVideoSource(peerId); // 🚀 触发切回 cameraStream
+        }
       });
 
       // 发布本地流时，建议带上名字，方便对方显示
@@ -143,42 +155,108 @@ export default {
         this.remoteUsers[peerId] = {
           peerId: peerId,
           userName: appData?.userName || '远程用户',
-          stream: new MediaStream(), // 创建一个空的流容器
-          hasVideo: false
+          cameraStream: new MediaStream(),
+          screenStream: new MediaStream(),
+          hasVideo: false,
+          isSharingScreen: false
         };
       }
 
       const userObj = this.remoteUsers[peerId];
       const track = consumer.track;
+      const label = appData?.label || '';
 
-      // 3. 将新轨道加入该用户的统一流容器
-      userObj.stream.addTrack(track);
+      // 分流存储轨道
+      if (consumer.kind === 'video') {
+        userObj.hasVideo = true;
+        if (label === 'screen') {
+          // 清空旧的屏幕轨道(如果有)，加入新的
+          userObj.screenStream.getVideoTracks().forEach(t => userObj.screenStream.removeTrack(t));
+          userObj.screenStream.addTrack(track);
+          userObj.isSharingScreen = true;
+        } else {
+          userObj.cameraStream.getVideoTracks().forEach(t => userObj.cameraStream.removeTrack(t));
+          userObj.cameraStream.addTrack(track);
+        }
+      } else {
+        // 音频轨道同时加入两个容器，保证切换流时声音不断
+        userObj.cameraStream.addTrack(track);
+        userObj.screenStream.addTrack(track);
+      }
 
-      // 4. 处理渲染逻辑
+
+      this.updateVideoSource(peerId);
+  
+      // 4. 处理 unmute 刷新（参考你之前的逻辑）
+      consumer.track.onunmute = () => {
+        this.updateVideoSource(peerId);
+      };
+    },
+
+    updateVideoSource(peerId) {
       this.$nextTick(() => {
+        const userObj = this.remoteUsers[peerId];
         const videoEl = document.getElementById(`video-${peerId}`);
-        if (!videoEl) return;
+        if (!userObj || !videoEl) return;
 
-        // 绑定流
-        videoEl.srcObject = userObj.stream;
-
-        if (kind === 'video') {
-          userObj.hasVideo = true;
+        if (userObj.isSharingScreen && userObj.screenStream) {
+          // 切换为屏幕共享流
+          videoEl.srcObject = userObj.screenStream;
+          console.log(`Peer ${peerId} switched to SCREEN stream`);
+        } else {
+          // 切换回摄像头流
+          videoEl.srcObject = userObj.cameraStream;
+          console.log(`Peer ${peerId} switched to CAMERA stream`);
         }
-
-        // 🚀 参考简单 HTML 的核心逻辑：处理 unmute
-        // Mediasoup 的流刚开始通常是 muted 状态，必须在 unmute 时重置 srcObject 画面才会出来
-        track.onunmute = () => {
-          console.log(`Track ${kind} unmuted, refreshing video element...`);
-          videoEl.srcObject = userObj.stream;
-          videoEl.play().catch(e => console.warn("Autoplay blocked:", e));
-        };
-
-        // 如果轨道已经是 live 的，直接播放
-        if (!track.muted) {
-          videoEl.play().catch(e => console.warn("Autoplay blocked:", e));
-        }
+        
+        videoEl.play().catch(() => {});
       });
+    },
+
+    async toggleScreenShare() {
+      if (this.screenSharing) {
+        await this.stopScreenShare();
+      } else {
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({ 
+              video: { width: 1920, height: 1080 } 
+          });
+          this.screenStream = stream;
+          this.screenSharing = true;
+
+          const track = stream.getVideoTracks()[0];
+          
+          // 🚀 关键：保存返回的 producer 实例
+          this.screenProducer = await meetingService.produce(track, 'screen');
+
+          // 监听浏览器自带的“停止共享”蓝色按钮
+          track.onended = () => {
+            this.stopScreenShare();
+          };
+        } catch (err) {
+          console.error('Screen share error:', err);
+        }
+      }
+    },
+
+    // 🚀 新增 stopScreenShare 方法
+    async stopScreenShare() {
+      if (!this.screenSharing) return;
+
+      // 1. 通知后端关闭屏幕 Producer
+      if (this.screenProducer) {
+        await meetingService.closeProducer(this.screenProducer.id);
+        this.screenProducer = null;
+      }
+
+      // 2. 停止本地轨道采集
+      if (this.screenStream) {
+        this.screenStream.getTracks().forEach(track => track.stop());
+        this.screenStream = null;
+      }
+
+      this.screenSharing = false;
+      console.log('Local screen share stopped');
     },
 
     handlePeerLeft(peerId) {
@@ -195,27 +273,6 @@ export default {
       }
       
       console.log('Remaining remote users:', Object.keys(this.remoteUsers).length);
-    },
-
-    async toggleScreenShare() {
-      if (this.screenSharing) {
-        // 停止逻辑
-        this.stopScreenShare();
-      } else {
-        try {
-          const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-          this.screenStream = stream;
-          this.screenSharing = true;
-
-          // 发布屏幕流
-          const track = stream.getVideoTracks()[0];
-          await meetingService.produce(track, 'screen');
-
-          track.onended = () => this.stopScreenShare();
-        } catch (err) {
-          console.error('Screen share error:', err);
-        }
-      }
     },
     
     async startCamera() {

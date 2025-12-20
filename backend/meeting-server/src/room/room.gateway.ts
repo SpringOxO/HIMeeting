@@ -133,6 +133,22 @@ export class RoomGateway implements OnGatewayDisconnect {
     client.to(roomId).emit('documentUpdate', update);
   }
 
+  @SubscribeMessage('closeProducer')
+  async handleCloseProducer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; producerId: string },
+  ) {
+    await this.roomService.closeProducer(data.roomId, client.id, data.producerId);
+    
+    // 🚀 广播给房间里其他人：某个流关掉了
+    client.to(data.roomId).emit('producerClosed', { 
+      peerId: client.id, 
+      producerId: data.producerId 
+    });
+    
+    return { success: true };
+  }
+
   async handleDisconnect(client: Socket) {
     console.log(`Client disconnected: ${client.id}`);
 
