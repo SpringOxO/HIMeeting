@@ -36,6 +36,8 @@ export class RoomService {
 
     let room = this.rooms.get(roomId);
     
+    const existingProducers: { producerId: string; peerId: string; appData: any }[] = [];
+    
     // 如果房间不存在，创建一个新的 Router
     if (!room) {
       const worker = this.mediasoupService.getWorker();
@@ -60,9 +62,23 @@ export class RoomService {
     // 返回 Yjs state
     const documentState = DocumentService.encodeState(room.document);
 
-    // 返回 Router 的能力 (RtpCapabilities)，前端必须拿到这个才能 load device
+    room.peers.forEach((peer, existingPeerId) => {
+      // 排除掉自己（虽然刚加入时自己还没发流，但这是个好习惯）
+      if (existingPeerId !== peerId) {
+        peer.producers.forEach((producer) => {
+          existingProducers.push({
+            producerId: producer.id,
+            peerId: existingPeerId,
+            appData: producer.appData, // 包含 label: 'camera' 等信息
+          });
+        });
+      }
+    });
+
+    // 返回 Router 的能力 (RtpCapabilities)，前端必须拿到这个才能 load device, 新增现存的 producers 列表
     return {
       rtpCapabilities: room.router.rtpCapabilities,
+      existingProducers, //  将存量列表返回给前端
       documentState,
     };
   }
@@ -160,16 +176,73 @@ export class RoomService {
     };
   }
 
-  async removePeer(roomId: string, peerId: string) {
+  // 辅助函数：查找 Transport
+  private getTransport(roomId: string, peerId: string, transportId: string) {
     const room = this.rooms.get(roomId);
-    if (!room) return;
+    const peer = room?.peers.get(peerId);
+    const transport = peer?.transports.get(transportId);
+    if (!transport) throw new Error(`Transport ${transportId} not found`);
+    return transport;
+  }
 
-    room.peers.delete(peerId);
-    this.clientRoomMap.delete(peerId);
+  async resumeConsumer(roomId: string, peerId: string, consumerId: string) {
+    // console.log('Resuming consumer:', consumerId);
+    const room = this.rooms.get(roomId);
+    const peer = room?.peers.get(peerId);
+    const consumer = peer?.consumers.get(consumerId);
 
-    if (room.peers.size === 0) {
-      await this.destroyRoom(roomId);
+    if (!consumer) throw new Error(`Consumer ${consumerId} not found`);
+    // console.log('Consumer resuming:', consumerId);
+    await consumer.resume(); // 核心：让 Mediasoup 开始发包
+    console.log('Consumer resumed:', consumerId)
+    await consumer.requestKeyFrame();
+  }
+
+  getRoomIdByClient(clientId: string): string {
+    const roomId = this.clientRoomMap.get(clientId);
+    if (!roomId) throw new Error(`Room ${roomId} not found in the map.`);
+    return roomId;
+  }
+
+  getRoomByRoomId(roomId: string): RoomState {
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error(`Room ${roomId} not found in the map.`);
+    return room;
+  }
+
+  async handlePeerDisconnect(peerId: string): Promise<string | null> {
+    let foundRoomId: string | null = null;
+
+    // 1. 遍历所有房间寻找这个 peer
+    for (const [roomId, room] of this.rooms.entries()) {
+      if (room.peers.has(peerId)) {
+        foundRoomId = roomId;
+        const peer = room.peers.get(peerId);
+
+        // 2. 销毁该 Peer 拥有的所有 Mediasoup 资源 (Producers, Consumers, Transports)
+        // 这一步非常重要，否则服务器内存会溢出
+        if (peer) {
+          // 关闭该 Peer 的所有 Producers
+          peer.producers.forEach(p => p.close());
+          // 关闭该 Peer 的所有 Consumers
+          peer.consumers.forEach(c => c.close());
+          // 假设你在 Peer 对象中也存了 transports，也需要全部 close
+          // peer.transports.forEach(t => t.close());
+        }
+
+        // 3. 从 Room 的 Peer 列表中移除
+        room.peers.delete(peerId);
+        console.log(`Peer ${peerId} removed from room ${roomId}`);
+        
+        // 如果房间空了，可以考虑销毁 Router (可选)
+        if (room.peers.size === 0) { 
+          await this.destroyRoom(roomId); 
+        }
+        
+        break; 
+      }
     }
+    return foundRoomId;
   }
 
   async destroyRoom(roomId: string) {
@@ -186,39 +259,5 @@ export class RoomService {
     await fs.promises.writeFile(path.join(dir, filename), Buffer.from(binary));
 
     this.rooms.delete(roomId);
-  }
-
-
-  // 辅助函数：查找 Transport
-  private getTransport(roomId: string, peerId: string, transportId: string) {
-    const room = this.rooms.get(roomId);
-    const peer = room?.peers.get(peerId);
-    const transport = peer?.transports.get(transportId);
-    if (!transport) throw new Error(`Transport ${transportId} not found`);
-    return transport;
-  }
-
-  async resumeConsumer(roomId: string, peerId: string, consumerId: string) {
-    const room = this.rooms.get(roomId);
-    const peer = room?.peers.get(peerId);
-    const consumer = peer?.consumers.get(consumerId);
-
-    if (!consumer) throw new Error(`Consumer ${consumerId} not found`);
-
-    await consumer.resume(); // 核心：让 Mediasoup 开始发包
-
-    await consumer.requestKeyFrame();
-  }
-
-  getRoomIdByClient(clientId: string): string {
-    const roomId = this.clientRoomMap.get(clientId);
-    if (!roomId) throw new Error(`Room ${roomId} not found in the map.`);
-    return roomId;
-  }
-
-  getRoomByRoomId(roomId: string): RoomState {
-    const room = this.rooms.get(roomId);
-    if (!room) throw new Error(`Room ${roomId} not found in the map.`);
-    return room;
   }
 }
