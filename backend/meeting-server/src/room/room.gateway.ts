@@ -29,7 +29,7 @@ export class RoomGateway implements OnGatewayDisconnect {
     const result = await this.roomService.joinRoom(data.roomId, client.id);
     // console.log("Success.")
     // 返回给前端
-    return { result };
+    return result;
   }
 
   // 2. 创建 Transport (发流或收流管道)
