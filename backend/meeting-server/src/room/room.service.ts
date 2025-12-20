@@ -250,13 +250,17 @@ export class RoomService {
     if (!room) return;
 
     // 销毁房间时保存文档
-    const dir = path.join(process.cwd(), 'documents');
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir);
-    }
-    const filename = `${roomId}-${Date.now()}.txt`;
     const binary = DocumentService.encodeState(room.document);
-    await fs.promises.writeFile(path.join(dir, filename), Buffer.from(binary));
+    if (binary.length > 0) {
+      const dir = path.join(process.cwd(), 'documents');
+      await fs.promises.mkdir(dir, { recursive: true });
+
+      const filename = `${roomId}-${Date.now()}.yjs`;
+      await fs.promises.writeFile(
+        path.join(dir, filename),
+        Buffer.from(binary),
+      );
+    }
 
     this.rooms.delete(roomId);
   }
