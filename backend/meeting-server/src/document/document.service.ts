@@ -16,14 +16,25 @@ export class DocumentService {
     Y.applyUpdate(document.ydoc, update);
   }
 
+  // 持久化文档
   static encodeState(document: DocumentState): Uint8Array {
     return Y.encodeStateAsUpdate(document.ydoc);
   }
+
+  // 加载文档
+  // const binary = await fs.promises.readFile(file);
+  // const doc = DocumentService.loadFromBinary(binary);
+  // room.document = doc;
+  loadFromBinary(binary: Uint8Array): Y.Doc {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, binary);
+    return doc;
+  }
+
 }
 
 // 前端
 // const ydoc = new Y.Doc();
-
 // // joinRoom 返回
 // Y.applyUpdate(ydoc, documentState);
 
