@@ -1,10 +1,11 @@
-<!-- src/components/SharedDocument.vue -->
+
 <template>
   <div class="doc-overlay">
     <div class="doc-header">
       <h3>共享文档</h3>
       <button @click="closeDoc" class="close-btn">×</button>
     </div>
+
     <div
       ref="editor"
       class="doc-editor"
@@ -16,30 +17,108 @@
 </template>
 
 <script>
+import * as Y from 'yjs';
+import MeetingService from '@/services/webrtc';
+const STORAGE_KEY = 'shared-document-content';
+
+// export default {
+//   name: 'SharedDocument',
+//   emits: ['close'],
+
+//   data() {
+//     return {
+//       content: '',
+//     };
+//   },
+
+//   mounted() {
+//     // 打开时，从 localStorage 读取
+//     const saved = localStorage.getItem(STORAGE_KEY);
+//     this.content = saved ?? '<p>会议纪要</p>';
+//     this.$refs.editor.innerHTML = this.content;
+//   },
+
+//   methods: {
+//     onInput() {
+//       // 输入时，实时保存
+//       this.content = this.$refs.editor.innerHTML;
+//       localStorage.setItem(STORAGE_KEY, this.content);
+//     },
+
+//     closeDoc() {
+//       this.$emit('close');
+//     },
+//   },
+// };
+
 export default {
-  name: 'SharedDocument',
-  emits: ['close'],
+  props: {
+    docId: {
+      type: Number,
+      required: true,
+    },
+  },
+
   data() {
     return {
-      content: '<p>会议纪要</p>'
+      ydoc: null,
+      ytext: null,
     };
   },
+
   mounted() {
-    this.$refs.editor.innerHTML = this.content;
+    const docClient = MeetingService.documentClient;
+    const ydoc = docClient?.docs.get(this.docId);
+
+    if (!ydoc) {
+      console.error('[SharedDocument] ydoc not found:', this.docId);
+      return;
+    }
+
+    this.ydoc = ydoc;
+    this.ytext = ydoc.getText('content');
+
+    this.$refs.editor.innerHTML = this.ytext.toString();
+
+    this._observer = () => {
+      const html = this.ytext.toString();
+      if (this.$refs.editor.innerHTML !== html) {
+        this.$refs.editor.innerHTML = html;
+      }
+    };
+
+    this.ytext.observe(this._observer);
   },
+
+
+  beforeUnmount() {
+    if (this.ytext && this._observer) {
+      this.ytext.unobserve(this._observer);
+    }
+  },
+
   methods: {
     onInput() {
-      this.content = this.$refs.editor.innerHTML;
-      // 未来可通过 WebSocket 广播 this.content
+      if (!this.ytext || !this.ydoc) return; // 🔴 核心修复
+
+      const html = this.$refs.editor.innerHTML;
+
+      this.ydoc.transact(() => {
+        this.ytext.delete(0, this.ytext.length);
+        this.ytext.insert(0, html);
+      });
     },
+
+
     closeDoc() {
       this.$emit('close');
-    }
-  }
+    },
+  },
 };
 </script>
 
 <style scoped>
+/* 原样保留 */
 .doc-overlay {
   position: fixed;
   top: 20px;
@@ -92,7 +171,8 @@ export default {
   padding: 16px;
   overflow-y: auto;
   outline: none;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: 15px;
   line-height: 1.6;
   color: #333;

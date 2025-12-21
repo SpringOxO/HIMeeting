@@ -2,6 +2,7 @@ import { WebSocketGateway, WebSocketServer, SubscribeMessage, MessageBody, Conne
 import { Server, Socket } from 'socket.io';
 import { RoomService } from './room.service';
 import { DocumentService } from '../document/document.service';
+import { DocumentType } from '../document/document.model';
 
 @WebSocketGateway({
   cors: {
@@ -27,7 +28,7 @@ export class RoomGateway implements OnGatewayDisconnect {
     
     // 调用 Service 逻辑
     const result = await this.roomService.joinRoom(data.roomId, client.id);
-    // console.log("Success.")
+    console.log("Success.")
     // 返回给前端
     return result;
   }
@@ -110,27 +111,69 @@ export class RoomGateway implements OnGatewayDisconnect {
     return { success: true };
   }
 
+  // 新建文档
+  @SubscribeMessage('createDocument')
+  handleCreateDocument(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      roomId: string;
+      docId: number;
+      type: DocumentType;
+    },
+  ) {
+    const { roomId, docId, type } = data;
+
+    const document = this.roomService.createDocument(roomId, docId, type);
+
+    const payload = {
+      id: document.id,
+      type: document.type,
+      state: DocumentService.encodeState(document),
+      createdAt: document.createdAt,
+    };
+
+    // 通知房间内其他人
+    client.to(roomId).emit('documentCreated', payload);
+
+    // ack 给创建者
+    return payload;
+  }
+
+  // 修改文档
   @SubscribeMessage('updateDocument')
   handleUpdateDocument(
     @ConnectedSocket() client: Socket,
     @MessageBody()
     data: {
       roomId: string;
-      update: number[]; // 前端传 Array
+      docId: number;
+      update: number[];
     },
   ) {
-    const { roomId, update } = data;
+    const { roomId, docId, update } = data;
 
-    const room = this.roomService.getRoomByRoomId(roomId);
-    if (!room) return;
-
-    const uint8Update = Uint8Array.from(update);
+    const updateBinary = Uint8Array.from(update);
 
     // 应用更新
-    DocumentService.applyUpdate(room.document, uint8Update);
+    this.roomService.applyDocumentUpdate(
+      roomId,
+      docId,
+      updateBinary,
+    );
 
-    // 广播给其他客户端
-    client.to(roomId).emit('documentUpdate', update);
+    // 广播给房间内其他客户端
+    client.to(roomId).emit('documentUpdated', {
+      docId,
+      update,
+    });
+
+    console.log(
+      `[doc] room=${roomId}, doc=${docId}, update=${update.length}`,
+    );
+
+    // ack（可选）
+    return { ok: true };
   }
 
   @SubscribeMessage('closeProducer')
