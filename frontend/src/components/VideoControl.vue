@@ -47,7 +47,7 @@
     </button>
 
     <!-- 聊天 -->
-    <button
+    <!-- <button
       class="icon-button"
       :class="{ active: chatOpen }"
       @click="$emit('toggle-chat')"
@@ -56,7 +56,7 @@
       <svg viewBox="0 0 24 24" width="24" height="24">
         <path fill="currentColor" d="M20,2H4C2.9,2,2,2.9,2,4v12c0,1.1,0.9,2,2,2h4v3c0,0.6,0.4,1,1,1s1-0.4,1-1v-3h8c1.1,0,2-0.9,2-2V4C20,2.9,19.1,2,18,2H20z M20,16H4V4h16V16z M7,14h10v-2H7V14z M7,10h10V8H7V10z" />
       </svg>
-    </button>
+    </button> -->
 
     <!-- 共享文档 -->
     <button

@@ -118,8 +118,12 @@ export default {
   methods: {
     async initMeeting() {
       await this.startCamera();
+      
+      const serverUrl = `http://${window.location.hostname}:3000`;
 
-      await meetingService.connect('http://localhost:3000', this.meetingId, async (producerId, peerId, appData) => {
+      console.log('Connecting to server:', serverUrl); // 方便调试
+
+      await meetingService.connect(serverUrl, this.meetingId, async (producerId, peerId, appData) => {
         await this.handleNewRemoteStream(producerId, peerId, appData);
       },
       (peerId) => {

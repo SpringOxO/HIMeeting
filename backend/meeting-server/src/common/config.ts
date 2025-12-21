@@ -1,25 +1,46 @@
 import { RtpCodecCapability, TransportListenIp } from 'mediasoup/types';
 import * as os from 'os';
 
-const getLocalIp = () => {
+const getWlanIp = () => {
   const interfaces = os.networkInterfaces();
+  
+  // 1. 定义 WLAN 常见的关键词（不区分大小写）
+  const wlanKeywords = ['wlan', 'wi-fi', 'wifi', 'en0']; // en0 是 Mac 的默认无线网卡
+
+  let fallbackIp = '127.0.0.1';
+
+  // 2. 第一次遍历：尝试寻找包含关键词的无线网卡
+  for (const devName in interfaces) {
+    const isWlan = wlanKeywords.some(key => devName.toLowerCase().includes(key));
+    if (!isWlan) continue;
+
+    const iface = interfaces[devName];
+    if (!iface) continue;
+
+    for (const info of iface) {
+      // 必须是 IPv4 且不是回环地址
+      if (info.family === 'IPv4' && !info.internal) {
+        return info.address;
+      }
+    }
+  }
+
+  // 3. 第二次遍历：如果没有找到 WLAN 关键词，则回退到原来的逻辑（获取第一个可用的物理 IP）
   for (const devName in interfaces) {
     const iface = interfaces[devName];
     if (!iface) continue;
 
-    for (let i = 0; i < iface.length; i++) {
-      const { family, address, internal } = iface[i];
-      // 过滤：IPv4 且 不是回环地址 (127.0.0.1)
-      if (family === 'IPv4' && !internal) {
-        // 这里的 address 就是类似 192.168.x.x 或 10.x.x.x 的局域网 IP
-        return address;
+    for (const info of iface) {
+      if (info.family === 'IPv4' && !info.internal) {
+        return info.address;
       }
     }
   }
-  return '127.0.0.1'; // 兜底返回
+
+  return fallbackIp;
 };
 
-const localIp = getLocalIp();
+const localIp = getWlanIp();
 console.log('--- 自动检测到的局域网 IP:', localIp);
 
 export const config = {
