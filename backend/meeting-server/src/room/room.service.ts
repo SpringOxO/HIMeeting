@@ -43,11 +43,15 @@ export class RoomService {
     if (!room) {
       const worker = this.mediasoupService.getWorker();
       const router = await worker.createRouter({ mediaCodecs: config.mediasoup.router.mediaCodecs });
-      const textDoc = DocumentService.create(0, 'text'); // 默认文档
+      const textDoc = DocumentService.create(0, 'text'); // 默认文本文档
+      const whiteboardDoc = DocumentService.create(1, 'whiteboard'); // 默认画板文档
     room = {
       router,
       peers: new Map(),
-      documents: new Map([[textDoc.id, textDoc]]),
+      documents: new Map<number, DocumentState>([
+        [0, textDoc],
+        [1, whiteboardDoc],
+      ]),
     };
       this.rooms.set(roomId, room);
     }
@@ -63,8 +67,8 @@ export class RoomService {
 
     // 序列化所有文档
     const documents = Array.from(room.documents.values()).map(doc => ({
-      id: doc.id,
-      type: doc.type,
+      id: doc.id,              // 0 / 1
+      type: doc.type,          // text / whiteboard
       state: DocumentService.encodeState(doc),
       createdAt: doc.createdAt,
     }));

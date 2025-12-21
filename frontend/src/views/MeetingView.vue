@@ -70,9 +70,9 @@
     />
 
     <!-- 功能面板 -->
-    <Whiteboard v-if="whiteboardOpen" @close="whiteboardOpen = false" />
+    <Whiteboard v-if="whiteboardOpen" :docId="currentDocId" @close="whiteboardOpen = false" />
     <ChatPanel v-if="chatOpen" @close="chatOpen = false" />
-    <SharedDocument v-if="docOpen" @close="docOpen = false" />
+    <SharedDocument v-if="docOpen" :docId="currentDocId" @close="docOpen = false" />
   </div>
 </template>
 
@@ -109,6 +109,7 @@ export default {
       username: this.$route.query.username,
       videoProducers: new Map(), // 存储自己的 producers
       screenProducer: null,
+      currentDocId: 0, // 0 = 文本，1 = 画板
     };
   },
   async mounted() {
@@ -335,6 +336,7 @@ export default {
       this.whiteboardOpen = !this.whiteboardOpen;
       this.chatOpen = false;
       this.docOpen = false;
+      this.currentDocId = 1; // 画板
     },
     toggleChat() {
       this.chatOpen = !this.chatOpen;
@@ -345,6 +347,7 @@ export default {
       this.docOpen = !this.docOpen;
       this.whiteboardOpen = false;
       this.chatOpen = false;
+      this.currentDocId = 0; // 文本
     },
 
     toggleCamera() {

@@ -28,7 +28,7 @@ export class RoomGateway implements OnGatewayDisconnect {
     
     // 调用 Service 逻辑
     const result = await this.roomService.joinRoom(data.roomId, client.id);
-    // console.log("Success.")
+    console.log("Success.")
     // 返回给前端
     return result;
   }
@@ -148,16 +148,18 @@ export class RoomGateway implements OnGatewayDisconnect {
     data: {
       roomId: string;
       docId: number;
-      update: Uint8Array;
+      update: number[];
     },
   ) {
     const { roomId, docId, update } = data;
+
+    const updateBinary = Uint8Array.from(update);
 
     // 应用更新
     this.roomService.applyDocumentUpdate(
       roomId,
       docId,
-      update,
+      updateBinary,
     );
 
     // 广播给房间内其他客户端
@@ -165,6 +167,10 @@ export class RoomGateway implements OnGatewayDisconnect {
       docId,
       update,
     });
+
+    console.log(
+      `[doc] room=${roomId}, doc=${docId}, update=${update.length}`,
+    );
 
     // ack（可选）
     return { ok: true };

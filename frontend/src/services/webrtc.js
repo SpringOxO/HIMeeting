@@ -1,6 +1,7 @@
 // src/services/webrtc.js
 import io from 'socket.io-client';
 import * as mediasoupClient from 'mediasoup-client';
+import DocumentClient from './document';
 
 class MeetingService {
   constructor() {
@@ -10,6 +11,7 @@ class MeetingService {
     this.recvTransport = null;
     this.roomId = null;
     this.peerId = null;
+    this.documentClient = null;
   }
 
   // 封装 Socket 请求
@@ -25,13 +27,15 @@ class MeetingService {
   async connect(serverUrl, roomId, onNewProducer, onPeerLeft, onProducerClosed) {
     this.roomId = roomId;
     this.socket = io(serverUrl);
+    this.documentClient = new DocumentClient(this.socket);
+    this.documentClient.setRoom(roomId);
 
     return new Promise((resolve) => {
       this.socket.on('connect', async () => {
         this.peerId = this.socket.id;
 
         // 1. 加入房间，获取 RTP 能力和存量 Producer
-        const { rtpCapabilities, existingProducers } = await this.request('joinRoom', { roomId });
+        const { rtpCapabilities, existingProducers, documents} = await this.request('joinRoom', { roomId });
 
         console.log(existingProducers);
         // 2. 加载设备
@@ -48,6 +52,16 @@ class MeetingService {
             onNewProducer(producerId, peerId, appData);
           });
         }
+
+        // 初始化文档
+        documents.forEach(doc => {
+          this.documentClient.initDocument(doc.id, doc.state);
+        });
+
+        // 监听远端文档更新
+        this.socket.on('documentUpdated', ({ docId, update }) => {
+          this.documentClient.applyRemoteUpdate(docId, update);
+        });
 
         // 5. 监听以后新加入的人 (增量)
         this.socket.on('newProducer', ({ producerId, peerId, appData }) => {

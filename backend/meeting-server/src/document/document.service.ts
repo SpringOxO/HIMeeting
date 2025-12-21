@@ -12,7 +12,7 @@ export class DocumentService {
       ydoc.getText('content');
     }
     if (type === 'whiteboard') {
-      ydoc.getMap('shapes');
+      ydoc.getArray('paths');
     }
 
     return {
