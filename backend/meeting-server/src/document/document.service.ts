@@ -1,11 +1,25 @@
 
 import * as Y from 'yjs';
 import { DocumentState } from './document.model';
+import { DocumentType } from './document.model';
 
 export class DocumentService {
-  static create(): DocumentState {
+  static create(id: number, type: DocumentType): DocumentState {
+    const ydoc = new Y.Doc();
+
+    // 不同类型初始化不同结构
+    if (type === 'text') {
+      ydoc.getText('content');
+    }
+    if (type === 'whiteboard') {
+      ydoc.getMap('shapes');
+    }
+
     return {
-      ydoc: new Y.Doc(),
+      id,
+      type,
+      ydoc,
+      createdAt: Date.now(),
     };
   }
 

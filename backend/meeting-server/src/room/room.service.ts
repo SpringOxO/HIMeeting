@@ -4,6 +4,7 @@ import { config } from '../common/config';
 import { Router, WebRtcTransport, Producer, Consumer } from 'mediasoup/types';
 import { DocumentService } from '../document/document.service';
 import { DocumentState } from '../document/document.model';
+import { DocumentType } from '../document/document.model';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -11,7 +12,7 @@ import * as path from 'path';
 interface RoomState {
   router: Router;
   peers: Map<string, PeerState>; // socketId -> Peer
-  document: DocumentState;
+  documents: Map<number, DocumentState>;
 }
 
 interface PeerState {
@@ -42,10 +43,11 @@ export class RoomService {
     if (!room) {
       const worker = this.mediasoupService.getWorker();
       const router = await worker.createRouter({ mediaCodecs: config.mediasoup.router.mediaCodecs });
+      const textDoc = DocumentService.create(0, 'text'); // 默认文档
     room = {
       router,
       peers: new Map(),
-      document: DocumentService.create(),
+      documents: new Map([[textDoc.id, textDoc]]),
     };
       this.rooms.set(roomId, room);
     }
@@ -59,8 +61,13 @@ export class RoomService {
       });
     }
 
-    // 返回 Yjs state
-    const documentState = DocumentService.encodeState(room.document);
+    // 序列化所有文档
+    const documents = Array.from(room.documents.values()).map(doc => ({
+      id: doc.id,
+      type: doc.type,
+      state: DocumentService.encodeState(doc),
+      createdAt: doc.createdAt,
+    }));
 
     room.peers.forEach((peer, existingPeerId) => {
       // 排除掉自己（虽然刚加入时自己还没发流，但这是个好习惯）
@@ -79,7 +86,7 @@ export class RoomService {
     return {
       rtpCapabilities: room.router.rtpCapabilities,
       existingProducers, //  将存量列表返回给前端
-      documentState,
+      documents,
     };
   }
 
@@ -176,6 +183,42 @@ export class RoomService {
     };
   }
 
+  // 新增文档
+  createDocument(
+    roomId: string,
+    docId: number,
+    type: DocumentType,
+  ): DocumentState {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      throw new Error(`Room ${roomId} not found`);
+    }
+
+    const document = DocumentService.create(docId, type);
+    room.documents.set(document.id, document);
+
+    return document;
+  }
+
+  // 修改文档
+  applyDocumentUpdate(
+    roomId: string,
+    docId: number,
+    update: Uint8Array,
+  ) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      throw new Error(`Room ${roomId} not found`);
+    }
+
+    const document = room.documents.get(docId);
+    if (!document) {
+      throw new Error(`Document ${docId} not found`);
+    }
+
+    DocumentService.applyUpdate(document, update);
+  }
+
   // 辅助函数：查找 Transport
   private getTransport(roomId: string, peerId: string, transportId: string) {
     const room = this.rooms.get(roomId);
@@ -234,7 +277,7 @@ export class RoomService {
         room.peers.delete(peerId);
         console.log(`Peer ${peerId} removed from room ${roomId}`);
         
-        // 如果房间空了，可以考虑销毁 Router (可选)
+        // 如果房间空了，可以考虑销毁
         if (room.peers.size === 0) { 
           await this.destroyRoom(roomId); 
         }
@@ -270,12 +313,12 @@ export class RoomService {
     if (!room) return;
 
     // 销毁房间时保存文档
-    const binary = DocumentService.encodeState(room.document);
-    if (binary.length > 0) {
-      const dir = path.join(process.cwd(), 'documents');
-      await fs.promises.mkdir(dir, { recursive: true });
+    const dir = path.join(process.cwd(), 'documents');
+    await fs.promises.mkdir(dir, { recursive: true });
 
-      const filename = `${roomId}-${Date.now()}.yjs`;
+    for (const doc of room.documents.values()) {
+      const binary = DocumentService.encodeState(doc);
+      const filename = `${roomId}-${doc.id}-${doc.type}-${Date.now()}.yjs`;
       await fs.promises.writeFile(
         path.join(dir, filename),
         Buffer.from(binary),
