@@ -3,7 +3,7 @@
   <div class="header">
     <div class="header-left">
       <div class="logo">
-        <span class="logo-text">腾讯会议</span>
+        <span class="logo-text">HIMeeting</span>
       </div>
     </div>
     <div class="header-right">

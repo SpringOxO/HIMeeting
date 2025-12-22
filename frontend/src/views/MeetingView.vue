@@ -267,13 +267,25 @@ export default {
     handlePeerLeft(peerId) {
       console.log(`Cleaning up peer: ${peerId}`);
       
-      // 1. 从响应式对象中删除
-      // 如果是 Vue 3，直接 delete 即可触发响应式更新
-      if (this.remoteUsers[peerId]) {
-        // 停止该用户流下的所有轨道，释放硬件资源
-        this.remoteUsers[peerId].stream.getTracks().forEach(track => track.stop());
+      const user = this.remoteUsers[peerId];
+  
+      if (user) {
+        // 🚀 修正：分别停止摄像头流和屏幕流的所有轨道
+        if (user.cameraStream) {
+          user.cameraStream.getTracks().forEach(track => {
+            track.stop();
+            console.log(`Stopped camera track for ${peerId}`);
+          });
+        }
         
-        // 删除对象属性，Vue 的 v-for 会自动移除对应的 DOM 元素
+        if (user.screenStream) {
+          user.screenStream.getTracks().forEach(track => {
+            track.stop();
+            console.log(`Stopped screen track for ${peerId}`);
+          });
+        }
+
+        // 从响应式对象中删除，触发 UI 更新
         delete this.remoteUsers[peerId];
       }
       

@@ -2,7 +2,7 @@
 <template>
   <div class="login-container">
     <div class="logo">
-      <h1 class="logo-text">腾讯会议</h1>
+      <h1 class="logo-text">HIMeeting</h1>
     </div>
     <div class="login-box">
       <input
