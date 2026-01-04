@@ -1,7 +1,7 @@
 
 import * as Y from 'yjs';
 
-export type DocumentType = 'text' | 'whiteboard';
+export type DocumentType = 'text' | 'whiteboard' | 'chat';
 
 export interface DocumentState {
   id: number;

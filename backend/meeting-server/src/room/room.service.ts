@@ -45,12 +45,14 @@ export class RoomService {
       const router = await worker.createRouter({ mediaCodecs: config.mediasoup.router.mediaCodecs });
       const textDoc = DocumentService.create(0, 'text'); // 默认文本文档
       const whiteboardDoc = DocumentService.create(1, 'whiteboard'); // 默认画板文档
+      const chatDoc = DocumentService.create(2, 'chat'); // 默认聊天文档
     room = {
       router,
       peers: new Map(),
       documents: new Map<number, DocumentState>([
         [0, textDoc],
         [1, whiteboardDoc],
+        [2, chatDoc],
       ]),
     };
       this.rooms.set(roomId, room);

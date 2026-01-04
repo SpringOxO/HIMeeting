@@ -24,40 +24,94 @@
 </template>
 
 <script>
+import MeetingService from '@/services/webrtc';
+
 export default {
   name: 'ChatPanel',
   emits: ['close'],
+  props: {
+    docId: {
+      type: Number,
+      required: true
+    }
+  },
+
   data() {
     return {
       newMessage: '',
-      messages: [
-        { sender: '系统', text: '欢迎加入会议！' }
-      ]
+      messages: [],
+      yarray: null,
+      _observer: null
     };
   },
+
+  mounted() {
+    const docClient = MeetingService.documentClient;
+    const ydoc = docClient.docs.get(this.docId);
+
+    if (!ydoc) {
+      console.error(`[ChatPanel] ydoc not found (docId=${this.docId})`);
+      return;
+    }
+
+    this.yarray = ydoc.getArray('messages');
+
+    // 初始化系统消息
+    if (this.yarray.length === 0) {
+      this.yarray.push([{
+        id: crypto.randomUUID(),
+        sender: '系统',
+        text: '欢迎加入会议！',
+        timestamp: Date.now()
+      }]);
+    }
+
+    const syncMessages = () => {
+      this.messages = this.yarray.toArray();
+      this.$nextTick(this.scrollToBottom);
+    };
+
+    this.yarray.observe(syncMessages);
+    syncMessages();
+    this._observer = syncMessages;
+  },
+
+  beforeUnmount() {
+    if (this.yarray && this._observer) {
+      this.yarray.unobserve(this._observer);
+    }
+  },
+
   methods: {
     sendMessage() {
-      if (this.newMessage.trim()) {
-        this.messages.push({
-          sender: '我',
-          text: this.newMessage.trim()
-        });
-        this.newMessage = '';
-        this.$nextTick(() => {
-          this.scrollToBottom();
-        });
-      }
+      if (!this.newMessage.trim()) return;
+
+      this.yarray.push([{
+        id: crypto.randomUUID(),
+        // sender: '我',
+        sender: MeetingService.peerId,
+        text: this.newMessage.trim(),
+        peerId: MeetingService.peerId,
+        timestamp: Date.now()
+      }]);
+
+      this.newMessage = '';
     },
+
     scrollToBottom() {
       const container = this.$refs.messages;
-      container.scrollTop = container.scrollHeight;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
     },
+
     closeChat() {
       this.$emit('close');
     }
   }
 };
 </script>
+
 
 <style scoped>
 .chat-overlay {

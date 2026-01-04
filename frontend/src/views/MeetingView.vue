@@ -71,7 +71,7 @@
 
     <!-- 功能面板 -->
     <Whiteboard v-if="whiteboardOpen" :docId="currentDocId" @close="whiteboardOpen = false" />
-    <ChatPanel v-if="chatOpen" @close="chatOpen = false" />
+    <ChatPanel v-if="chatOpen" :docId="currentDocId" @close="chatOpen = false" />
     <SharedDocument v-if="docOpen" :docId="currentDocId" @close="docOpen = false" />
   </div>
 </template>
@@ -358,6 +358,7 @@ export default {
       this.chatOpen = !this.chatOpen;
       this.whiteboardOpen = false;
       this.docOpen = false;
+      this.currentDocId = 2; // 文本
     },
     toggleDoc() {
       this.docOpen = !this.docOpen;
