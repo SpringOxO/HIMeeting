@@ -15,6 +15,10 @@ export class DocumentService {
       ydoc.getArray('paths');
     }
 
+    if (type === 'chat') {
+      ydoc.getArray('messages');
+    }
+
     return {
       id,
       type,
